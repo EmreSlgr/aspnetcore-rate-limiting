@@ -17,7 +17,25 @@ $url = "http://localhost:5206/api/resource"
     catch {
         $response = $_.Exception.Response
         if ($response -and $response.StatusCode.value__ -eq 429) {
-            $retryAfter = $response.Headers["Retry-After"]
+            $retryAfter = $null
+            if ($response.Headers) {
+                $retryAfter = $response.Headers["Retry-After"]
+            }
+
+            # Header gelmezse dönen JSON gövdesinden oku
+            if (-not $retryAfter) {
+                try {
+                    $stream = $response.GetResponseStream()
+                    if ($stream) {
+                        $reader = New-Object System.IO.StreamReader($stream)
+                        $body = $reader.ReadToEnd() | ConvertFrom-Json
+                        $retryAfter = $body.retryAfterSeconds
+                    }
+                } catch {}
+            }
+
+            if (-not $retryAfter) { $retryAfter = "10" }
+
             Write-Host "[$index/10] Status: 429 Too Many Requests - LIMIT AŞILDI (Engellendi!) [Retry-After: $retryAfter sn]" -ForegroundColor Red
         } else {
             Write-Host "[$index/10] Hata: $($_.Exception.Message)" -ForegroundColor Yellow

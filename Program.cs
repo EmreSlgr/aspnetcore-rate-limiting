@@ -5,6 +5,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // 1. Rate Limiting Servisinin Yapılandırılması (Harici kütüphane gerektirmez)
 const string SlidingPolicyName = "sliding-policy";
+const int WindowSeconds = 10;
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -17,7 +18,7 @@ builder.Services.AddRateLimiter(options =>
     options.AddSlidingWindowLimiter(policyName: SlidingPolicyName, limiterOptions =>
     {
         limiterOptions.PermitLimit = 5;
-        limiterOptions.Window = TimeSpan.FromSeconds(10);
+        limiterOptions.Window = TimeSpan.FromSeconds(WindowSeconds);
         limiterOptions.SegmentsPerWindow = 2;
         limiterOptions.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
         limiterOptions.QueueLimit = 0;
@@ -28,12 +29,14 @@ builder.Services.AddRateLimiter(options =>
     {
         context.HttpContext.Response.ContentType = "application/json";
 
-        int retryAfterSeconds = 0;
-        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+        // SlidingWindowLimiter'da metadata gelmezse varsayılan pencere süresini kullanırız
+        int retryAfterSeconds = WindowSeconds;
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter) && retryAfter.TotalSeconds > 0)
         {
-            retryAfterSeconds = (int)retryAfter.TotalSeconds;
-            context.HttpContext.Response.Headers.RetryAfter = retryAfterSeconds.ToString();
+            retryAfterSeconds = (int)Math.Ceiling(retryAfter.TotalSeconds);
         }
+
+        context.HttpContext.Response.Headers.RetryAfter = retryAfterSeconds.ToString();
 
         await context.HttpContext.Response.WriteAsJsonAsync(new
         {
@@ -52,14 +55,12 @@ var app = builder.Build();
 app.UseRateLimiter();
 
 // 3. Endpoint Tanımları
-// Herkese açık, limitsiz endpoint
 app.MapGet("/", () => Results.Ok(new
 {
     status = "OK",
     message = "API çalışıyor. Rate limit test endpoint'i: /api/resource"
 }));
 
-// Rate Limit uygulanan korumalı endpoint
 app.MapGet("/api/resource", () => Results.Ok(new
 {
     status = "Success",
